@@ -32,3 +32,10 @@ bump versionCode per release. WebGL2 needs an up-to-date System WebView.
 
 ## License
 COMMERCIAL LICENSE AGREEMENT (All Rights Reserved, Taylor Christian Matthesen).
+
+## 1.1.0 (2026-09-10)
+Core redesign after user feedback ("chaotic bubbles and foam, very hard to look at"):
+Apollonian inversion replaced with a MANDELBULB — coherent sculptural form, soft-shadow lit,
+AO, rim + spec, starfield void. Tight analogous palettes with slow drift (was rainbow spin).
+Audio still sculpts: bass->power exponent, mids->symmetry rotation, treble->orbit-trap tint,
+beats->camera breath, flux->orbit, RMS->exposure.

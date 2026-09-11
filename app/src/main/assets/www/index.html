@@ -53,101 +53,126 @@ uniform float uTime;
 uniform float uBass, uMid, uTreble, uBeat, uFlux, uRMS;
 uniform int   uPreset;
 
+// cohesive analogous palettes — slow drift only, no rainbow spinning
 vec3 pal(float t){
-  if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.10,0.20)));          // inferno: gold-red
-  if(uPreset==2) return 0.5+0.5*cos(6.28318*(t+vec3(0.55,0.65,0.35)));          // abyss: teal-green
-  return 0.5+0.5*cos(6.28318*(t+vec3(0.75,0.45,0.15)));                          // nebula: indigo-magenta-cyan
+  if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.04,0.09)));   // inferno: ember golds
+  if(uPreset==2) return 0.5+0.5*cos(6.28318*(t+vec3(0.50,0.56,0.44)));   // abyss: deep teals
+  return 0.5+0.5*cos(6.28318*(t+vec3(0.72,0.78,0.68)));                 // nebula: violet-ice
 }
 mat2 rot(float a){float c=cos(a),s=sin(a);return mat2(c,-s,s,c);}
 
-// Apollonian sphere-inversion fractal. The AUDIO constructs it:
-//  uBass   -> inversion constant k (density of structure)
-//  uMid    -> box-fold clamp c (symmetry tightness)
-//  uBeat   -> iteration count boost (detail explosion on hits)
-//  uTreble -> orbit-trap color gain
+// MANDELBULB. The AUDIO sculpts a coherent structure:
+//  uBass -> power exponent (6..10: buds swell, arms split)
+//  uMid  -> domain rotation (symmetry sweep)
+//  uBeat -> power spike on hits (one-breath inflation)
+//  uTreble -> orbit-trap tint strength (surface shimmer)
 float map(vec3 p, out float trap){
-  float k = 1.05 + uBass*0.75 + uBeat*0.45;
-  float c = 0.55 + uMid*0.40;
-  int iters = 7 + int(uTreble*3.0) + int(uBeat*2.0);
-  p.xz *= rot(uTime*0.06 + uFlux*0.8);
-  p.xy *= rot(uTime*0.03 + uMid*0.4);
-  float scale = 1.0;
-  trap = 100.0;
-  for(int i=0;i<10;i++){
-    if(i>=iters) break;
-    p = 2.0*clamp(p,-c,c) - p;                 // box fold
-    float r2 = dot(p,p);
-    float f = k/max(r2,0.06);
-    p *= f; scale *= f;
-    trap = min(trap, abs(p.x)+abs(p.y));       // orbit trap -> veins of color
+  float power = 6.5 + uBass*2.2 + uBeat*1.6;
+  p.xz *= rot(uTime*0.05 + uFlux*0.25);
+  p.yz *= rot(0.35 + uMid*0.30);
+  vec3 z = p;
+  float dr = 1.0, r = 0.0;
+  trap = 1e10;
+  for(int i=0;i<9;i++){
+    r = length(z);
+    if(r > 2.0) break;
+    float theta = acos(clamp(z.z/r,-1.0,1.0)) * power;
+    float phi   = atan(z.y, z.x) * power;
+    dr = pow(r, power-1.0)*power*dr + 1.0;
+    float zr = pow(r, power);
+    z = zr * vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta)) + p;
+    trap = min(trap, dot(z,z));
   }
-  return length(p)/scale;
+  return 0.5*log(max(r,1e-6))*r/max(dr,1e-6);
 }
 
 vec3 calcNormal(vec3 p){
   float t;
-  vec2 e = vec2(0.0008,0.0);
+  vec2 e = vec2(0.0006,0.0);
   return normalize(vec3(
     map(p+e.xyy,t)-map(p-e.xyy,t),
     map(p+e.yxy,t)-map(p-e.yxy,t),
     map(p+e.yyx,t)-map(p-e.yyx,t)));
 }
 
+// cheap soft shadow — gives the bulb weight and readability
+float softShadow(vec3 ro, vec3 rd){
+  float res = 1.0, t = 0.02, t2;
+  for(int i=0;i<24;i++){
+    float h = map(ro + rd*t, t2);
+    res = min(res, 10.0*h/t);
+    t += clamp(h, 0.012, 0.25);
+    if(res < 0.004 || t > 4.5) break;
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
 void main(){
   vec2 uv = (2.0*gl_FragCoord.xy - uRes)/uRes.y;
   float t = uTime;
 
-  // camera: slow orbit, dolly punch on beats, roll on flux
-  float ang = t*0.10 + uFlux*2.0;
-  float rad = 1.55 - uBeat*0.45 + uBass*0.15;
-  vec3 ro = vec3(rad*sin(ang), 0.35+uMid*0.55, rad*cos(ang));
-  ro.xz *= rot(uBeat*0.35);
-  vec3 fw = normalize(-ro);
+  // slow, stable orbit; beats breathe the distance slightly
+  float ang = t*0.07 + uFlux*0.8;
+  float rad = 2.35 - uBeat*0.28 + uBass*0.10;
+  vec3 ro = vec3(rad*sin(ang), 0.55 + uMid*0.35, rad*cos(ang));
+  vec3 fw = normalize(vec3(0.0, -0.12, 0.0) - ro);
   vec3 rt = normalize(cross(vec3(0,1,0),fw));
   vec3 up = cross(fw,rt);
-  float fov = 1.1 + uBeat*0.35;
-  vec3 rd = normalize(fw*fov + rt*uv.x + up*uv.y);
+  vec3 rd = normalize(fw*(1.15 + uBeat*0.10) + rt*uv.x + up*uv.y);
 
-  // march with glow accumulation
-  float g=0.0, trap=0.0, d, td=0.0;
+  // march
+  float trap=0.0, d, td=0.0, minTrap=1e10;
   vec3 p = ro;
-  float minTrap = 100.0;
   bool hit=false;
-  for(int i=0;i<110;i++){
+  float steps=0.0;
+  for(int i=0;i<100;i++){
     d = map(p,trap);
     minTrap = min(minTrap, trap);
-    g += exp(-d*(28.0-uTreble*14.0));
-    if(d < 0.0009 + td*0.0006){ hit=true; break; }
-    p += rd*max(d*0.85, 0.0012);
-    td += d*0.85;
-    if(td>9.0) break;
+    if(d < 0.0012 + td*0.0008){ hit=true; steps=float(i); break; }
+    p += rd*max(d*0.9, 0.0015);
+    td += d*0.9;
+    if(td>10.0) break;
   }
 
-  // base palette clock: treble spins hue, RMS pushes brightness
-  float hueClock = t*0.03 + uTreble*0.45 + uFlux*0.2 + float(uPreset)*0.31;
-  vec3 col = vec3(0.0);
+  float hueClock = t*0.015 + float(uPreset)*0.33;   // very slow palette drift
+  vec3 col;
 
   if(hit){
     vec3 n = calcNormal(p);
-    float ao = clamp(1.0 - float(minTrap>99.0), 0.0, 1.0);
-    ao = clamp(exp(-0.12*float(0)),0.0,1.0);
-    float dif = clamp(dot(n, normalize(vec3(0.6,0.8,0.4))), 0.0, 1.0);
-    float rim = pow(1.0-abs(dot(n,rd)), 3.0);
-    vec3 base = pal(hueClock + minTrap*0.22 + p.y*0.15);
-    col = base*(0.18 + dif*0.9) + pal(hueClock+0.35)*rim*(0.6+uTreble*0.8);
-    col *= mix(0.35, 1.0, smoothstep(9.0, 2.0, td));   // depth fog
+    // key light slowly orbits so shadows travel across the surface
+    vec3 lightDir = normalize(vec3(sin(t*0.11), 0.9, cos(t*0.11)));
+    float dif = clamp(dot(n, lightDir), 0.0, 1.0);
+    float sh  = softShadow(p + n*0.003, lightDir);
+    float rim = pow(1.0 - clamp(dot(n,-rd),0.0,1.0), 3.0);
+    float ao  = clamp(1.0 - steps/100.0, 0.0, 1.0);           // crevice darkening
+    float spec= pow(clamp(dot(reflect(rd,n), lightDir),0.0,1.0), 32.0);
+
+    // surface: deep body color -> palette tint by orbit trap (treble rides this)
+    vec3 body = pal(hueClock) * 0.55 + vec3(0.04,0.04,0.07);
+    vec3 tint = pal(hueClock + 0.06 + minTrap*0.05);
+    vec3 surf = mix(body, tint, clamp(0.35 + uTreble*0.45, 0.0, 1.0));
+
+    col  = surf * (0.16 + 0.95*dif*sh) * (0.48 + 0.52*ao);
+    col += pal(hueClock + 0.10) * rim * (0.35 + uTreble*0.55) * (0.4+0.6*ao);
+    col += vec3(1.0,0.98,0.95) * spec * sh * 0.55;
+    // gentle depth haze so far silhouettes melt into the void
+    col = mix(col, pal(hueClock+0.03)*0.12, smoothstep(4.0, 9.5, td));
+  } else {
+    // background: whisper of palette + faint vignette starfield
+    col = pal(hueClock)*0.035;
+    vec2 g = gl_FragCoord.xy/uRes;
+    float star = fract(sin(dot(floor(g*uRes/2.0),vec2(12.9898,78.233)))*43758.5453);
+    col += vec3(step(0.9975, star)) * (0.35 + 0.65*fract(star*91.7)) * 0.5;
   }
 
-  // ambient glow field: the "energy" of the piece
-  col += pal(hueClock + 0.15) * g * (0.010 + uTreble*0.020 + uBeat*0.020);
-  col += pal(hueClock + minTrap*0.10) * exp(-minTrap*2.6) * (0.25+uMid*0.55);
-
-  // exposure from loudness, ACES tonemap, vignette, grain
-  col *= 0.75 + uRMS*1.6;
+  // exposure from loudness, ACES, vignette, fine grain
+  col *= 1.05 + uRMS*0.9;
+  if(uPreset==1) col *= 1.45;   // ember lift
+  if(uPreset==2) col *= 1.60;   // abyss lift
   col = (col*(2.51*col+0.03))/(col*(2.43*col+0.59)+0.14);
-  col *= 1.0 - 0.35*dot(uv*0.55,uv*0.55);
+  col *= 1.0 - 0.30*dot(uv*0.5,uv*0.5);
   float gr = fract(sin(dot(gl_FragCoord.xy+uTime*60.0,vec2(12.9898,78.233)))*43758.5453);
-  col += (gr-0.5)*0.028;
+  col += (gr-0.5)*0.014;
 
   O = vec4(pow(max(col,0.0), vec3(0.4545)), 1.0);
 }
@@ -164,7 +189,6 @@ window.__forge={ready:false,frames:0};
 const gl = canvas.getContext("webgl2",{antialias:false,alpha:false,preserveDrawingBuffer:true});
 if(!gl){ fail("WebGL2 not available on this device/browser"); throw new Error("no webgl2"); }
 
-// ---- shader compile ----
 function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
   if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){fail("shader: "+gl.getShaderInfoLog(s));throw 0;}return s;}
 const prog=gl.createProgram();
@@ -182,18 +206,16 @@ gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
 const U={}; ["uRes","uTime","uBass","uMid","uTreble","uBeat","uFlux","uRMS","uPreset"]
   .forEach(n=>U[n]=gl.getUniformLocation(prog,n));
 
-// ---- sizing ----
 let quality=720;
 function resize(){
   const ar=innerWidth/innerHeight;
-  canvas.height=quality;                 // 720 or 1080 lines
-  canvas.width=Math.round(quality*ar);   // match screen aspect for clean captures
+  canvas.height=quality;
+  canvas.width=Math.round(quality*ar);
   gl.viewport(0,0,canvas.width,canvas.height);
 }
 addEventListener("resize",resize); resize();
 $("quality").onchange=e=>{quality=+e.target.value;resize();};
 
-// ---- audio engine ----
 let actx=null, analyser=null, srcNode=null, el=new Audio(), audioDest=null, freq=null;
 let playing=false, beat=0, beatSmooth=0, flux=0, prevBins=null, lastBeatT=0, bassEma=0.05;
 el.crossOrigin="anonymous"; el.loop=false;
@@ -210,20 +232,17 @@ function initAudio(){
 function bands(){
   analyser.getByteFrequencyData(freq);
   const avg=(a,b)=>{let s=0;for(let i=a;i<b;i++)s+=freq[i];return s/((b-a)*255);};
-  // fftSize 2048 @48k -> bin ~23.4Hz
   return { bass:avg(1,7), mid:avg(9,85), tre:avg(86,470) };
 }
 function analyse(dt){
   const b=bands();
-  // adaptive bass average for beat detection
   bassEma=bassEma*0.995+b.bass*0.005;
   const now=performance.now();
   if(b.bass>bassEma*1.45 && b.bass>0.28 && now-lastBeatT>240){
     beat=1; lastBeatT=now;
   }
-  beat*=Math.pow(0.86, dt*60);          // fast decay punch envelope
+  beat*=Math.pow(0.86, dt*60);
   beatSmooth=beatSmooth*0.9+beat*0.1;
-  // spectral flux (forward energy) -> motion driver
   if(prevBins){
     let f=0; for(let i=1;i<470;i++){const d=freq[i]-prevBins[i]; if(d>0)f+=d;}
     flux=flux*0.85+(f/470/255)*0.15;
@@ -233,7 +252,6 @@ function analyse(dt){
   return b;
 }
 
-// ---- file load ----
 let objectUrl=null;
 $("file").onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
@@ -246,7 +264,6 @@ $("file").onchange=e=>{
   $("play").textContent="PLAY";
 };
 
-// ---- play / pause ----
 $("play").onclick=async()=>{
   initAudio();
   if(actx.state==="suspended") await actx.resume();
@@ -255,7 +272,6 @@ $("play").onclick=async()=>{
 };
 el.onended=()=>{ playing=false; $("play").textContent="PLAY"; if(recording) stopRec(true); };
 
-// ---- recording ----
 let recorder=null, chunks=[], recording=false;
 function pickMime(){
   for(const m of ["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"])
@@ -291,7 +307,6 @@ function stopRec(auto){
   $("rec").textContent="RECORD"; $("rec").classList.remove("recording");
 }
 
-// ---- UI auto-hide (clean captures) ----
 let uiTimer=null;
 function pokeUI(){
   $("ui").classList.remove("hidden"); $("hint").classList.add("hidden");
@@ -300,7 +315,6 @@ function pokeUI(){
 }
 addEventListener("pointerdown",pokeUI); pokeUI();
 
-// ---- render loop ----
 const t0=performance.now();
 let lastT=t0;
 function frame(){
@@ -320,13 +334,12 @@ function frame(){
   gl.uniform1f(U.uMid,b.mid);
   gl.uniform1f(U.uTreble,b.tre);
   gl.uniform1f(U.uBeat,beatSmooth);
-  gl.uniform1f(U.uFlux,flux*3.0);
+  gl.uniform1f(U.uFlux,flux*1.6);
   gl.uniform1f(U.uRMS,rms);
   gl.uniform1i(U.uPreset,+$("preset").value);
   gl.drawArrays(gl.TRIANGLES,0,3);
   window.__forge.frames++;
   window.__forge.ready=true;
-  // time readout
   if(el.src){ const s=el.currentTime|0;
     $("time").textContent=String(s/60|0).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
   requestAnimationFrame(frame);
