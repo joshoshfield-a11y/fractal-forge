@@ -1,7 +1,13 @@
 package com.fractal.forge
 
 import android.Manifest
+import android.content.ContentValues
 import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
+import android.webkit.JavascriptInterface
+import android.widget.Toast
 import android.os.Bundle
 import android.view.WindowManager
 import android.webkit.PermissionRequest
@@ -27,6 +33,36 @@ class MainActivity : ComponentActivity() {
     // assets/www served over https://appassets.androidplatform.net — a secure
     // context, so ES module scripts, fetch and getUserMedia all work (file://
     // blocks module scripts via CORS and was the white-screen root cause).
+    // ---- chunked export bridge: blob -> base64 chunks -> MediaStore Downloads ----
+    inner class ForgeBridge {
+        private var stream: java.io.OutputStream? = null
+        private var name: String = "export.bin"
+        @JavascriptInterface
+        fun startFile(fileName: String, mime: String) {
+            name = fileName
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, mime)
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/FractalForge")
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                stream = uri?.let { contentResolver.openOutputStream(it) }
+            } catch (e: Exception) { stream = null }
+        }
+        @JavascriptInterface
+        fun appendChunk(b64: String) {
+            try { stream?.write(Base64.decode(b64, Base64.DEFAULT)); stream?.flush() } catch (e: Exception) {}
+        }
+        @JavascriptInterface
+        fun endFile() {
+            try { stream?.close() } catch (e: Exception) {}
+            stream = null
+            runOnUiThread { Toast.makeText(this@MainActivity, "Saved to Downloads/FractalForge", Toast.LENGTH_LONG).show() }
+        }
+    }
+    private val exportBridge = ForgeBridge()
+
     private val assetLoader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
         .build()
@@ -69,6 +105,8 @@ class MainActivity : ComponentActivity() {
             mediaPlaybackRequiresUserGesture = false
             allowContentAccess = true         // content:// URIs from the file picker
         }
+
+        web.addJavascriptInterface(exportBridge, "ForgeBridge")
 
         web.webViewClient = object : WebViewClientCompat() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = false

@@ -47,3 +47,12 @@ emissive audio-driven grid, nebula + starfield atmosphere, handheld shake, iride
 thin-film speculars. SCENE DIRECTION: sustained-bass drop detector auto-engages wide dolly
 + 6-wedge kaleidoscope + hot bloom; quiet passages = intimate close orbit. Debug hook:
 __forgeSet('drop'|'kaleido'|'bass'|'beat', value).
+
+## 1.3.0 (2026-09-10)
+Audio-generated INFINITE FRACTAL ZOOM: log-polar fractal space (periodic in log r ->
+dives forever, zero float degradation). Bass=zoom velocity+cell size, beats=inward kicks,
+mids=fold symmetry/corridor, treble=detail density, flux=spiral, RMS=exposure.
+Singularity core flares on beats. Zoom factor readout (x1eN).
+EXPORT: SNAP = PNG frame; RECORD = WebM (video+audio) — both saved natively to
+Downloads/FractalForge via chunked ForgeBridge (startFile/appendChunk/endFile,
+MediaStore.Downloads API 29+); desktop browsers use blob download.

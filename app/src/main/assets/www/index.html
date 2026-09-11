@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>FRACTAL FORGE — Audio-Reactive Engine</title>
+<title>FRACTAL FORGE — Audio-Driven Infinite Zoom</title>
 <style>
   html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif}
   #gl{position:fixed;inset:0;width:100%;height:100%;display:block}
@@ -14,8 +14,9 @@
       font-size:13px;cursor:pointer;letter-spacing:.5px}
   button:hover,label.btn:hover{border-color:#7c4dff;color:#fff}
   #rec.recording{background:#3a0a14;border-color:#ff2d55;color:#ffccd5}
-  #track{color:#8f90c0;font-size:12px;max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #time{color:#565790;font-size:12px;font-variant-numeric:tabular-nums}
+  #track{color:#8f90c0;font-size:12px;max-width:30vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #time,#zoom{color:#565790;font-size:12px;font-variant-numeric:tabular-nums}
+  #zoom{color:#9be8ff}
   select{background:#0d0d1f;color:#cfd0ff;border:1px solid #2a2a55;border-radius:8px;padding:9px;font-size:12px}
   #hint{position:fixed;top:14px;left:16px;color:#55578a;font-size:12px;z-index:10;transition:opacity .4s}
   #hint.hidden{opacity:0}
@@ -25,11 +26,12 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div id="hint">FRACTAL FORGE · load a track, press record — the audio directs the video</div>
+<div id="hint">FRACTAL FORGE · the audio drives the dive · SNAP saves a frame, RECORD exports video</div>
 <div id="err"></div>
 <div id="ui">
   <label class="btn">LOAD TRACK<input id="file" type="file" accept="audio/*" style="display:none"></label>
   <button id="play" disabled>PLAY</button>
+  <button id="snap">SNAP</button>
   <button id="rec" disabled>RECORD</button>
   <select id="preset">
     <option value="0">NEBULA</option>
@@ -40,18 +42,18 @@
     <option value="720">720p</option>
     <option value="1080">1080p</option>
   </select>
-  <span id="track">no track loaded</span>
+  <span id="track">no track</span>
   <span id="time">00:00</span>
+  <span id="zoom">x1e0.0</span>
 </div>
 
-<!-- ======================= SCENE SHADER (HDR) ======================= -->
+<!-- ======================= SCENE: LOG-POLAR INFINITE FRACTAL ZOOM (HDR) ======================= -->
 <script id="fs-scene" type="x-shader/x-fragment">#version 300 es
 precision highp float;
 out vec4 O;
 uniform vec2  uRes;
-uniform float uTime;
-uniform float uBass, uMid, uTreble, uBeat, uFlux, uRMS, uDrop;
-uniform int uPreset;
+uniform float uTime, uZoom, uSpin, uDrift, uBass, uMid, uTreble, uBeat, uFlux, uRMS, uDrop;
+uniform int   uPreset;
 
 vec3 palette(float t){
   if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.04,0.09)));
@@ -59,146 +61,54 @@ vec3 palette(float t){
   return 0.5+0.5*cos(6.28318*(t+vec3(0.72,0.78,0.68)));
 }
 mat2 rot(float a){float c=cos(a),s=sin(a);return mat2(c,-s,s,c);}
-float hash21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
-float noise(vec2 p){
-  vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-  return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),
-             mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);
-}
-
-float mandelbulb(vec3 p, out float trap){
-  float power = 6.5 + uBass*2.2 + uBeat*1.6;
-  p.xz *= rot(uTime*0.05 + uFlux*0.25);
-  p.yz *= rot(0.35 + uMid*0.30);
-  vec3 z = p;
-  float dr = 1.0, r = 0.0;
-  trap = 1e10;
-  for(int i=0;i<9;i++){
-    r = length(z);
-    if(r > 2.0) break;
-    float theta = acos(clamp(z.z/r,-1.0,1.0)) * power;
-    float phi   = atan(z.y, z.x) * power;
-    dr = pow(r, power-1.0)*power*dr + 1.0;
-    float zr = pow(r, power);
-    z = zr * vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta)) + p;
-    trap = min(trap, dot(z,z));
-  }
-  return 0.5*log(max(r,1e-6))*r/max(dr,1e-6);
-}
-
-// mat: 0 = bulb, 1 = stage floor
-float map(vec3 p, out float trap, out float mat){
-  float tb;
-  float db = mandelbulb(p, tb);
-  float df = p.y + 0.95;
-  mat = (df < db) ? 1.0 : 0.0;
-  trap = tb;
-  return min(db, df);
-}
-float map2(vec3 p){ float t,m; return map(p,t,m); }
-
-vec3 calcNormal(vec3 p){
-  vec2 e = vec2(0.0006,0.0);
-  float t,m;
-  return normalize(vec3(
-    map(p+e.xyy,t,m)-map(p-e.xyy,t,m),
-    map(p+e.yxy,t,m)-map(p-e.yxy,t,m),
-    map(p+e.yyx,t,m)-map(p-e.yyx,t,m)));
-}
-float softShadow(vec3 ro, vec3 rd){
-  float res = 1.0, t = 0.02, t2; float m;
-  for(int i=0;i<24;i++){
-    float h = map(ro + rd*t, t2, m);
-    res = min(res, 10.0*h/t);
-    t += clamp(h, 0.012, 0.25);
-    if(res < 0.004 || t > 4.5) break;
-  }
-  return clamp(res, 0.0, 1.0);
-}
 
 void main(){
   vec2 uv = (2.0*gl_FragCoord.xy - uRes)/uRes.y;
-  float t = uTime;
+  float r = max(length(uv), 1e-4);
+  float a = atan(uv.y, uv.x);
 
-  // SCENE DIRECTION: quiet = intimate close orbit, drop = wide dolly + pull back
-  float wide = mix(1.0, 1.9, uDrop);                    // camera distance multiplier
-  float ang = t*mix(0.10, 0.05, uDrop) + uFlux*0.8;
-  float rad = (2.35 - uBeat*0.28 + uBass*0.10) * wide;
-  float camH = 0.55 + uMid*0.35 + uDrop*0.8;
-  vec3 ro = vec3(rad*sin(ang), camH, rad*cos(ang));
-  vec3 fw = normalize(vec3(0.0, -0.12 + uDrop*0.1, 0.0) - ro);
-  vec3 rt = normalize(cross(vec3(0,1,0),fw));
-  vec3 up = cross(fw,rt);
-  float fov = 1.15 + uBeat*0.10 - uDrop*0.25;
-  // subtle handheld shake scaled by treble
-  float sh1 = (noise(vec2(t*1.7,0.0))-0.5)*0.012*(0.3+uTreble);
-  float sh2 = (noise(vec2(0.0,t*2.3))-0.5)*0.012*(0.3+uTreble);
-  vec3 rd = normalize(fw*fov + rt*(uv.x+sh1) + up*(uv.y+sh2));
+  // ---- AUDIO BUILDS THE ZOOM PATH through log-polar fractal space ----
+  // Periodic in log(r): the pattern repeats every e^(period) of zoom -> INFINITE dive,
+  // zero float degradation (a Mandelbrot zoom dies ~1e-14; this never does).
+  vec2 p = vec2(log(r), a);
+  p.x -= uZoom;
+  p.y += uSpin;
+  p.y = mod(p.y + 3.14159, 6.28318) - 3.14159;
+  float density = 2.4 + uTreble*1.3 + uDrop*0.5;
+  p *= density;
+  p.x += uDrift;
 
-  float trap=0.0, mat=0.0, d, td=0.0, minTrap=1e10;
-  vec3 p = ro;
-  bool hit=false; float steps=0.0;
-  for(int i=0;i<100;i++){
-    d = map(p,trap,mat);
-    minTrap = min(minTrap, trap);
-    if(d < 0.0012 + td*0.0008){ hit=true; steps=float(i); break; }
-    p += rd*max(d*0.9, 0.0015);
-    td += d*0.9;
-    if(td>14.0) break;
+  // fractal cell field: abs-folds + periodic cos cells = kaleidoscopic self-similar tiling
+  vec2 q = p;
+  float walls = 1e10;
+  float acc = 0.0;
+  for(int i=0;i<6;i++){
+    q = abs(q) - (0.55 + uBass*0.22);
+    q *= rot(0.55 + float(i)*0.38 + uMid*0.45);
+    float ci = cos(q.x*3.14159)*cos(q.y*3.14159);
+    walls = min(walls, abs(ci));
+    acc += exp(-abs(ci)*7.0);
+    q *= 1.13 + uBass*0.04;
   }
+  float fw = max(fwidth(walls)*1.6, 0.002);
+  float cellLine = smoothstep(0.10+fw, 0.10-fw, walls);
+  float cellGlow = exp(-walls*3.5);
 
-  float hueClock = t*0.015 + float(uPreset)*0.33;
-  vec3 col;
+  float hueClock = uTime*0.02 + uZoom*0.012 + float(uPreset)*0.33;
+  vec3 col = vec3(0.004,0.004,0.010);
+  col += palette(hueClock + 0.10) * cellLine * (1.2 + uTreble*1.8 + uBeat*1.5);
+  col += palette(hueClock + 0.02 + acc*0.03) * cellGlow * (0.35 + uMid*0.75);
+  col += palette(hueClock + 0.20) * exp(-walls*walls*40.0) * 0.8;
 
-  if(hit && mat < 0.5){
-    // ---- BULB ----
-    vec3 n = calcNormal(p);
-    vec3 lightDir = normalize(vec3(sin(t*0.11), 0.9, cos(t*0.11)));
-    float dif = clamp(dot(n, lightDir), 0.0, 1.0);
-    float sh  = softShadow(p + n*0.003, lightDir);
-    float rim = pow(1.0 - clamp(dot(n,-rd),0.0,1.0), 3.0);
-    float ao  = clamp(1.0 - steps/100.0, 0.0, 1.0);
-    float spec= pow(clamp(dot(reflect(rd,n), lightDir),0.0,1.0), 32.0);
-    // iridescent thin-film spec — the "expensive" look
-    vec3 film = palette(hueClock*2.0 + dot(n,rd)*1.5 + 0.4);
-
-    vec3 body = palette(hueClock) * 0.55 + vec3(0.04,0.04,0.07);
-    vec3 tint = palette(hueClock + 0.06 + minTrap*0.05);
-    vec3 surf = mix(body, tint, clamp(0.35 + uTreble*0.45, 0.0, 1.0));
-
-    col  = surf * (0.16 + 0.95*dif*sh) * (0.48 + 0.52*ao);
-    col += palette(hueClock + 0.10) * rim * (0.35 + uTreble*0.55) * (0.4+0.6*ao);
-    col += film * spec * sh * (0.5 + uDrop*0.6);
-    col = mix(col, palette(hueClock+0.03)*0.12, smoothstep(4.0, 10.5, td));
-  } else if(hit){
-    // ---- STAGE FLOOR: dark gloss + emissive grid ----
-    vec3 n = calcNormal(p);
-    vec3 lightDir = normalize(vec3(sin(t*0.11), 0.9, cos(t*0.11)));
-    vec2 g = abs(fract(p.xz*0.8)-0.5);
-    float line = smoothstep(0.46,0.5,max(g.x,g.y));
-    float fade = exp(-0.22*length(p.xz));
-    vec3 base = vec3(0.015,0.015,0.025);
-    col = base;
-    col += palette(hueClock+0.05) * line * (0.5 + uMid*1.4 + uBeat*0.8) * fade;
-    float spec = pow(clamp(dot(reflect(rd,n), lightDir),0.0,1.0), 24.0);
-    col += palette(hueClock+0.08) * spec * 0.35 * fade;
-    col = mix(col, palette(hueClock+0.03)*0.05, smoothstep(3.0, 11.0, td));
-  } else {
-    // ---- ATMOSPHERE: gradient + nebula + stars ----
-    float grad = 0.5 - uv.y*0.5;
-    col = palette(hueClock)*0.03 + vec3(0.004,0.004,0.010)*(1.0-grad);
-    float neb = noise(uv*3.0 + vec2(t*0.01,0.0)) * noise(uv*6.0 - vec2(0.0,t*0.008));
-    col += palette(hueClock+0.12) * neb * 0.05;
-    vec2 sg = floor(gl_FragCoord.xy/2.0);
-    float star = hash21(sg);
-    float tw = step(0.9985, star) * (0.4+0.6*fract(star*91.7));
-    col += vec3(tw) * (0.4 + 0.3*sin(t*2.0+star*40.0));
-  }
+  // the singularity: the point the dive is rushing toward — beats flare it
+  col += palette(hueClock + 0.05) * exp(-r*6.0) * (0.7 + uBeat*2.2 + uDrop*0.8);
+  // peripheral swirl energy from flux
+  col += palette(hueClock + 0.14) * smoothstep(1.4, 0.2, r) * uFlux * 0.35;
 
   col *= 1.05 + uRMS*0.9;
   if(uPreset==1) col *= 1.45;
   if(uPreset==2) col *= 1.60;
-  O = vec4(col, 1.0);   // HDR out — tonemapped at composite
+  O = vec4(col, 1.0);
 }
 </script>
 
@@ -212,8 +122,7 @@ void main(){
   vec2 uv = gl_FragCoord.xy/uRes;
   vec3 c = texture(tScene, uv).rgb;
   float l = dot(c, vec3(0.2126,0.7152,0.0722));
-  float knee = 0.55;
-  float soft = clamp(l - knee, 0.0, 4.0);
+  float soft = clamp(l - 0.55, 0.0, 4.0);
   O = vec4(c * (soft/(l+0.0001)), 1.0);
 }
 </script>
@@ -224,7 +133,7 @@ precision highp float;
 out vec4 O;
 uniform sampler2D tIn;
 uniform vec2 uRes;
-uniform vec2 uDir;    // texel-scaled direction
+uniform vec2 uDir;
 void main(){
   vec2 uv = gl_FragCoord.xy/uRes;
   vec3 c = texture(tIn, uv).rgb * 0.227027;
@@ -236,20 +145,19 @@ void main(){
 }
 </script>
 
-<!-- ======================= COMPOSITE PASS ======================= -->
+<!-- ======================= COMPOSITE ======================= -->
 <script id="fs-post" type="x-shader/x-fragment">#version 300 es
 precision highp float;
 out vec4 O;
 uniform sampler2D tScene, tBloom;
 uniform vec2 uRes;
-uniform float uTime, uBeat, uKaleido, uDrop, uPreset;
+uniform float uTime, uBeat, uKaleido, uDrop;
 
 void main(){
   vec2 uv = gl_FragCoord.xy/uRes;
   vec2 c = uv - 0.5;
   c.x *= uRes.x/uRes.y;
 
-  // kaleidoscope fold (6 wedges) — beat pulses, drop sustains
   float a = atan(c.y, c.x);
   float r = length(c);
   float seg = 6.28318/6.0;
@@ -260,7 +168,6 @@ void main(){
   fuv.x /= uRes.x/uRes.y;
   fuv += 0.5;
 
-  // chromatic aberration, radial, pulses with beats
   vec2 dir = fuv - 0.5;
   float ca = 0.0022 + uBeat*0.0045 + uDrop*0.0015;
   vec3 col;
@@ -271,7 +178,6 @@ void main(){
   vec3 bloom = texture(tBloom, fuv).rgb;
   col += bloom * (0.55 + uBeat*0.35 + uDrop*0.35);
 
-  // ACES tonemap, vignette, grain
   col = (col*(2.51*col+0.03))/(col*(2.43*col+0.59)+0.14);
   col *= 1.0 - 0.30*dot(c*0.62, c*0.62);
   float gr = fract(sin(dot(gl_FragCoord.xy+uTime*60.0, vec2(12.9898,78.233)))*43758.5453);
@@ -293,7 +199,7 @@ const gl = canvas.getContext("webgl2",{antialias:false,alpha:false,preserveDrawi
 if(!gl){ fail("WebGL2 not available on this device/browser"); throw new Error("no webgl2"); }
 const floatExt = gl.getExtension("EXT_color_buffer_float");
 
-function mkProg(vsId, fsId){
+function mkProg(fsId){
   const compile=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
     if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){fail("shader: "+gl.getShaderInfoLog(s));throw 0;}return s;};
   const p=gl.createProgram();
@@ -303,32 +209,27 @@ function mkProg(vsId, fsId){
   if(!gl.getProgramParameter(p,gl.LINK_STATUS)){fail("link "+fsId+": "+gl.getProgramInfoLog(p));throw 0;}
   return p;
 }
-const progScene=mkProg(null,"fs-scene");
-const progBright=mkProg(null,"fs-bright");
-const progBlur=mkProg(null,"fs-blur");
-const progPost=mkProg(null,"fs-post");
+const progScene=mkProg("fs-scene"), progBright=mkProg("fs-bright"),
+      progBlur=mkProg("fs-blur"), progPost=mkProg("fs-post");
 
 const buf=gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER,buf);
 gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
-function bindQuad(p){
-  const loc=gl.getAttribLocation(p,"p");
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-}
+function bindQuad(p){const loc=gl.getAttribLocation(p,"p");
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);}
 function U(p,n){return gl.getUniformLocation(p,n);}
-const uS={res:U(progScene,"uRes"),time:U(progScene,"uTime"),bass:U(progScene,"uBass"),mid:U(progScene,"uMid"),
-  tre:U(progScene,"uTreble"),beat:U(progScene,"uBeat"),flux:U(progScene,"uFlux"),rms:U(progScene,"uRMS"),
+const uS={res:U(progScene,"uRes"),time:U(progScene,"uTime"),zoom:U(progScene,"uZoom"),
+  spin:U(progScene,"uSpin"),drift:U(progScene,"uDrift"),
+  bass:U(progScene,"uBass"),mid:U(progScene,"uMid"),tre:U(progScene,"uTreble"),
+  beat:U(progScene,"uBeat"),flux:U(progScene,"uFlux"),rms:U(progScene,"uRMS"),
   drop:U(progScene,"uDrop"),preset:U(progScene,"uPreset")};
 const uB={scene:U(progBright,"tScene"),res:U(progBright,"uRes")};
 const uBl={inp:U(progBlur,"tIn"),res:U(progBlur,"uRes"),dir:U(progBlur,"uDir")};
-const uP={scene:U(progPost,"tScene"),bloom:U(progPost,"tBloom"),res:U(progPost,"uRes"),time:U(progPost,"uTime"),
-  beat:U(progPost,"uBeat"),kaleido:U(progPost,"uKaleido"),drop:U(progPost,"uDrop"),preset:U(progPost,"uPreset")};
+const uP={scene:U(progPost,"tScene"),bloom:U(progPost,"tBloom"),res:U(progPost,"uRes"),
+  time:U(progPost,"uTime"),beat:U(progPost,"uBeat"),kaleido:U(progPost,"uKaleido"),drop:U(progPost,"uDrop")};
 
-// ---- FBOs ----
 function mkTex(w,h){
-  const t=gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D,t);
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
   if(floatExt) gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,w,h,0,gl.RGBA,gl.HALF_FLOAT,null);
   else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
@@ -346,7 +247,6 @@ function allocFB(){
   bloomATex=mkTex(BW,BH); bloomAFBO=mkFBO(bloomATex);
   bloomBTex=mkTex(BW,BH); bloomBFBO=mkFBO(bloomBTex);
 }
-
 let quality=720;
 function resize(){
   const ar=innerWidth/innerHeight;
@@ -361,11 +261,9 @@ $("quality").onchange=e=>{quality=+e.target.value;resize();};
 // ---- audio ----
 let actx=null, analyser=null, srcNode=null, el=new Audio(), audioDest=null, freq=null;
 let playing=false, beat=0, beatSmooth=0, flux=0, prevBins=null, lastBeatT=0, bassEma=0.05;
-let bassSlow=0.05, drop=0, kaleido=0;
-window.__forgeSet = (k,v)=>{ if(k==="drop")drop=v; else if(k==="kaleido")kaleido=v;
-  else if(k==="beat"){beatSmooth=v;beat=v;} else if(k==="bass")forcedBass=v; };
-let forcedBass=-1;
-
+let bassSlow=0.05, midEma=0.05, treEma=0.05, drop=0, kaleido=0;
+// ZOOM STATE — the audio writes these
+let zoom=0, zoomKick=0, spin=0, drift=0;
 el.crossOrigin="anonymous"; el.loop=false;
 
 function initAudio(){
@@ -385,17 +283,17 @@ function bands(){
 function analyse(dt){
   const b=bands();
   bassEma=bassEma*0.995+b.bass*0.005;
-  bassSlow=bassSlow*0.992+b.bass*0.008;              // very slow — drop detector
+  bassSlow=bassSlow*0.992+b.bass*0.008;
+  midEma=midEma*0.98+b.mid*0.02;
+  treEma=treEma*0.98+b.tre*0.02;
   const now=performance.now();
   if(b.bass>bassEma*1.45 && b.bass>0.28 && now-lastBeatT>240){
-    beat=1; lastBeatT=now;
+    beat=1; zoomKick+=0.55; lastBeatT=now;      // beat = inward whoosh
   }
   beat*=Math.pow(0.86, dt*60);
   beatSmooth=beatSmooth*0.9+beat*0.1;
-  // DROP: sustained high bass energy -> ramp in; release when it falls
   const dropTarget=(b.bass>0.5 && bassSlow>0.38)?1:0;
   drop += (dropTarget-drop)*(dropTarget>drop?0.04:0.012);
-  // kaleido: beat flash + drop sustain
   const kTarget=Math.max(beatSmooth*0.5, drop);
   kaleido += (kTarget-kaleido)*0.08;
   if(prevBins){
@@ -424,7 +322,34 @@ $("play").onclick=async()=>{
   if(playing){ el.pause(); playing=false; $("play").textContent="PLAY"; }
   else{ await el.play(); playing=true; $("play").textContent="PAUSE"; }
 };
-el.onended=()=>{ playing=false; $("play").textContent="PLAY"; if(recording) stopRec(true); };
+el.onended=()=>{ playing=false; $("play").textContent="PLAY"; if(recording) stopRec(); };
+
+// ---- EXPORT: chunked bridge on Android, blob download on desktop ----
+function b64(buf){
+  const bytes=new Uint8Array(buf); let s=""; const CH=0x8000;
+  for(let i=0;i<bytes.length;i+=CH) s+=String.fromCharCode.apply(null, bytes.subarray(i,i+CH));
+  return btoa(s);
+}
+async function exportBlob(blob, name){
+  if(window.ForgeBridge){
+    try{
+      ForgeBridge.startFile(name, blob.type||"application/octet-stream");
+      const CHUNK=1024*1024;
+      for(let off=0; off<blob.size; off+=CHUNK){
+        ForgeBridge.appendChunk(b64(await blob.slice(off,off+CHUNK).arrayBuffer()));
+      }
+      ForgeBridge.endFile();
+      return;
+    }catch(e){ /* fall through to browser path */ }
+  }
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+}
+$("snap").onclick=()=>{
+  canvas.toBlob(b=>{ if(b) exportBlob(b, "forge-frame-"+Date.now()+".png"); }, "image/png");
+};
 
 let recorder=null, chunks=[], recording=false;
 function pickMime(){
@@ -432,7 +357,7 @@ function pickMime(){
     if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m)) return m;
   return "";
 }
-$("rec").onclick=()=>{ recording?stopRec(false):startRec(); };
+$("rec").onclick=()=>{ recording?stopRec():startRec(); };
 function startRec(){
   if(!el.src) return;
   initAudio(); if(actx.state==="suspended") actx.resume();
@@ -444,18 +369,14 @@ function startRec(){
   recorder=new MediaRecorder(stream,{mimeType:pickMime(),videoBitsPerSecond:14_000_000,audioBitsPerSecond:192_000});
   recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
   recorder.onstop=()=>{
-    const blob=new Blob(chunks,{type:"webm"});
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download="fractal-forge-"+Date.now()+".webm";
-    a.click();
+    exportBlob(new Blob(chunks,{type:"webm"}), "fractal-zoom-"+Date.now()+".webm");
   };
   recorder.start(250);
   recording=true;
   $("rec").textContent="STOP + SAVE"; $("rec").classList.add("recording");
   if(!playing) $("play").click();
 }
-function stopRec(auto){
+function stopRec(){
   if(recorder&&recorder.state!=="inactive") recorder.stop();
   recording=false;
   $("rec").textContent="RECORD"; $("rec").classList.remove("recording");
@@ -469,31 +390,40 @@ function pokeUI(){
 }
 addEventListener("pointerdown",pokeUI); pokeUI();
 
-// ---- render: scene -> bright -> blur x2 -> composite ----
+// ---- render ----
 const t0=performance.now();
 let lastT=t0;
-function draw(p){ gl.useProgram(p); bindQuad(p); gl.drawArrays(gl.TRIANGLES,0,3); }
+window.__forgeSet=(k,v)=>{ if(k==="bass")forcedBass=v; else if(k==="beat"){beatSmooth=beat=v;}
+  else if(k==="drop")drop=v; else if(k==="kaleido")kaleido=v; else if(k==="zoom")zoom=v; };
+let forcedBass=-1;
 function frame(){
   const now=performance.now();
   const dt=Math.min((now-lastT)/1000,0.1); lastT=now;
   let b={bass:0,mid:0,tre:0}, rms=0;
-  if(forcedBass>=0) b={bass:forcedBass,mid:forcedBass*0.7,tre:forcedBass*0.5};
+  if(forcedBass>=0){ b={bass:forcedBass,mid:forcedBass*0.7,tre:forcedBass*0.5}; }
   else if(playing&&analyser){ b=analyse(dt); rms=b.bass*0.5+b.mid*0.35+b.tre*0.15; }
-  else { beat*=0.9; beatSmooth*=0.9; flux*=0.9; kaleido*=0.97; drop*=0.99; }
+  else { beat*=0.9; beatSmooth*=0.9; flux*=0.9; kaleido*=0.97; drop*=0.99;
+         midEma*=0.99; treEma*=0.99; }
+
+  // ---- AUDIO -> ZOOM DIVE ----
+  zoomKick *= Math.pow(0.25, dt);                       // kick decay
+  zoom += dt*(0.06 + b.bass*0.55 + drop*0.40) + zoomKick*dt*3.0;
+  spin += dt*(0.05 + flux*0.9) + beatSmooth*dt*0.3;
+  drift += (midEma*1.6 - drift)*0.02;                   // mids choose the corridor
+
   const t=(now-t0)/1000;
   const preset=+$("preset").value;
 
-  // P0: scene -> HDR fbo
   gl.bindFramebuffer(gl.FRAMEBUFFER,sceneFBO);
   gl.viewport(0,0,W,H);
   gl.useProgram(progScene); bindQuad(progScene);
   gl.uniform2f(uS.res,W,H); gl.uniform1f(uS.time,t);
+  gl.uniform1f(uS.zoom,zoom); gl.uniform1f(uS.spin,spin); gl.uniform1f(uS.drift,drift);
   gl.uniform1f(uS.bass,b.bass); gl.uniform1f(uS.mid,b.mid); gl.uniform1f(uS.tre,b.tre);
   gl.uniform1f(uS.beat,beatSmooth); gl.uniform1f(uS.flux,flux*1.6);
   gl.uniform1f(uS.rms,rms); gl.uniform1f(uS.drop,drop); gl.uniform1i(uS.preset,preset);
   gl.drawArrays(gl.TRIANGLES,0,3);
 
-  // P1: bright -> bloomA
   gl.bindFramebuffer(gl.FRAMEBUFFER,bloomAFBO);
   gl.viewport(0,0,BW,BH);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,sceneTex);
@@ -501,7 +431,6 @@ function frame(){
   gl.uniform1i(uB.scene,0); gl.uniform2f(uB.res,BW,BH);
   gl.drawArrays(gl.TRIANGLES,0,3);
 
-  // P2/P3: blur H, V
   const blurPass=(srcTex,dstFBO,dx,dy)=>{
     gl.bindFramebuffer(gl.FRAMEBUFFER,dstFBO);
     gl.viewport(0,0,BW,BH);
@@ -513,10 +442,9 @@ function frame(){
   };
   blurPass(bloomATex,bloomBFBO,1,0);
   blurPass(bloomBTex,bloomAFBO,0,1);
-  blurPass(bloomATex,bloomBFBO,1,0);   // second iteration = wide soft bloom
+  blurPass(bloomATex,bloomBFBO,1,0);
   blurPass(bloomBTex,bloomAFBO,0,1);
 
-  // P6: composite to screen
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   gl.viewport(0,0,W,H);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,sceneTex);
@@ -525,12 +453,13 @@ function frame(){
   gl.uniform1i(uP.scene,0); gl.uniform1i(uP.bloom,1);
   gl.uniform2f(uP.res,W,H); gl.uniform1f(uP.time,t);
   gl.uniform1f(uP.beat,beatSmooth); gl.uniform1f(uP.kaleido,kaleido);
-  gl.uniform1f(uP.drop,drop); gl.uniform1i(uP.preset,preset);
+  gl.uniform1f(uP.drop,drop);
   gl.drawArrays(gl.TRIANGLES,0,3);
   gl.activeTexture(gl.TEXTURE0);
 
   window.__forge.frames++;
   window.__forge.ready=true;
+  $("zoom").textContent="x1e"+(zoom/2.302585).toFixed(1);
   if(el.src){ const s=el.currentTime|0;
     $("time").textContent=String(s/60|0).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
   requestAnimationFrame(frame);
