@@ -39,3 +39,11 @@ Apollonian inversion replaced with a MANDELBULB — coherent sculptural form, so
 AO, rim + spec, starfield void. Tight analogous palettes with slow drift (was rainbow spin).
 Audio still sculpts: bass->power exponent, mids->symmetry rotation, treble->orbit-trap tint,
 beats->camera breath, flux->orbit, RMS->exposure.
+
+## 1.2.0 (2026-09-10)
+MV-quality pass: HDR pipeline (scene RGBA16F -> soft-knee bright pass -> 2x separable
+gaussian bloom -> composite), chromatic aberration pulsing on beats, stage floor with
+emissive audio-driven grid, nebula + starfield atmosphere, handheld shake, iridescent
+thin-film speculars. SCENE DIRECTION: sustained-bass drop detector auto-engages wide dolly
++ 6-wedge kaleidoscope + hot bloom; quiet passages = intimate close orbit. Debug hook:
+__forgeSet('drop'|'kaleido'|'bass'|'beat', value).
