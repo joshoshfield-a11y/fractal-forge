@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>FRACTAL FORGE — Audio-Reactive Engine</title>
+<style>
+  html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif}
+  #gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #ui{position:fixed;left:0;right:0;bottom:0;padding:14px 16px;display:flex;gap:10px;align-items:center;
+      flex-wrap:wrap;background:linear-gradient(transparent,rgba(0,0,10,.85));transition:opacity .4s;z-index:10}
+  #ui.hidden{opacity:0;pointer-events:none}
+  button,label.btn{padding:10px 14px;background:#0d0d1f;border:1px solid #2a2a55;border-radius:8px;color:#cfd0ff;
+      font-size:13px;cursor:pointer;letter-spacing:.5px}
+  button:hover,label.btn:hover{border-color:#7c4dff;color:#fff}
+  #rec.recording{background:#3a0a14;border-color:#ff2d55;color:#ffccd5}
+  #track{color:#8f90c0;font-size:12px;max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #time{color:#565790;font-size:12px;font-variant-numeric:tabular-nums}
+  select{background:#0d0d1f;color:#cfd0ff;border:1px solid #2a2a55;border-radius:8px;padding:9px;font-size:12px}
+  #hint{position:fixed;top:14px;left:16px;color:#55578a;font-size:12px;z-index:10;transition:opacity .4s}
+  #hint.hidden{opacity:0}
+  #err{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);color:#ff2d55;font-size:14px;max-width:80vw;
+       display:none;z-index:20;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hint">FRACTAL FORGE · load a track, press record — the audio builds the geometry</div>
+<div id="err"></div>
+<div id="ui">
+  <label class="btn">LOAD TRACK<input id="file" type="file" accept="audio/*" style="display:none"></label>
+  <button id="play" disabled>PLAY</button>
+  <button id="rec" disabled>RECORD</button>
+  <select id="preset">
+    <option value="0">NEBULA</option>
+    <option value="1">INFERNO</option>
+    <option value="2">ABYSS</option>
+  </select>
+  <select id="quality">
+    <option value="720">720p</option>
+    <option value="1080">1080p</option>
+  </select>
+  <span id="track">no track loaded</span>
+  <span id="time">00:00</span>
+</div>
+
+<!-- ======================= FRAGMENT SHADER ======================= -->
+<script id="fs" type="x-shader/x-fragment">#version 300 es
+precision highp float;
+out vec4 O;
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uBass, uMid, uTreble, uBeat, uFlux, uRMS;
+uniform int   uPreset;
+
+vec3 pal(float t){
+  if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.10,0.20)));          // inferno: gold-red
+  if(uPreset==2) return 0.5+0.5*cos(6.28318*(t+vec3(0.55,0.65,0.35)));          // abyss: teal-green
+  return 0.5+0.5*cos(6.28318*(t+vec3(0.75,0.45,0.15)));                          // nebula: indigo-magenta-cyan
+}
+mat2 rot(float a){float c=cos(a),s=sin(a);return mat2(c,-s,s,c);}
+
+// Apollonian sphere-inversion fractal. The AUDIO constructs it:
+//  uBass   -> inversion constant k (density of structure)
+//  uMid    -> box-fold clamp c (symmetry tightness)
+//  uBeat   -> iteration count boost (detail explosion on hits)
+//  uTreble -> orbit-trap color gain
+float map(vec3 p, out float trap){
+  float k = 1.05 + uBass*0.75 + uBeat*0.45;
+  float c = 0.55 + uMid*0.40;
+  int iters = 7 + int(uTreble*3.0) + int(uBeat*2.0);
+  p.xz *= rot(uTime*0.06 + uFlux*0.8);
+  p.xy *= rot(uTime*0.03 + uMid*0.4);
+  float scale = 1.0;
+  trap = 100.0;
+  for(int i=0;i<10;i++){
+    if(i>=iters) break;
+    p = 2.0*clamp(p,-c,c) - p;                 // box fold
+    float r2 = dot(p,p);
+    float f = k/max(r2,0.06);
+    p *= f; scale *= f;
+    trap = min(trap, abs(p.x)+abs(p.y));       // orbit trap -> veins of color
+  }
+  return length(p)/scale;
+}
+
+vec3 calcNormal(vec3 p){
+  float t;
+  vec2 e = vec2(0.0008,0.0);
+  return normalize(vec3(
+    map(p+e.xyy,t)-map(p-e.xyy,t),
+    map(p+e.yxy,t)-map(p-e.yxy,t),
+    map(p+e.yyx,t)-map(p-e.yyx,t)));
+}
+
+void main(){
+  vec2 uv = (2.0*gl_FragCoord.xy - uRes)/uRes.y;
+  float t = uTime;
+
+  // camera: slow orbit, dolly punch on beats, roll on flux
+  float ang = t*0.10 + uFlux*2.0;
+  float rad = 1.55 - uBeat*0.45 + uBass*0.15;
+  vec3 ro = vec3(rad*sin(ang), 0.35+uMid*0.55, rad*cos(ang));
+  ro.xz *= rot(uBeat*0.35);
+  vec3 fw = normalize(-ro);
+  vec3 rt = normalize(cross(vec3(0,1,0),fw));
+  vec3 up = cross(fw,rt);
+  float fov = 1.1 + uBeat*0.35;
+  vec3 rd = normalize(fw*fov + rt*uv.x + up*uv.y);
+
+  // march with glow accumulation
+  float g=0.0, trap=0.0, d, td=0.0;
+  vec3 p = ro;
+  float minTrap = 100.0;
+  bool hit=false;
+  for(int i=0;i<110;i++){
+    d = map(p,trap);
+    minTrap = min(minTrap, trap);
+    g += exp(-d*(28.0-uTreble*14.0));
+    if(d < 0.0009 + td*0.0006){ hit=true; break; }
+    p += rd*max(d*0.85, 0.0012);
+    td += d*0.85;
+    if(td>9.0) break;
+  }
+
+  // base palette clock: treble spins hue, RMS pushes brightness
+  float hueClock = t*0.03 + uTreble*0.45 + uFlux*0.2 + float(uPreset)*0.31;
+  vec3 col = vec3(0.0);
+
+  if(hit){
+    vec3 n = calcNormal(p);
+    float ao = clamp(1.0 - float(minTrap>99.0), 0.0, 1.0);
+    ao = clamp(exp(-0.12*float(0)),0.0,1.0);
+    float dif = clamp(dot(n, normalize(vec3(0.6,0.8,0.4))), 0.0, 1.0);
+    float rim = pow(1.0-abs(dot(n,rd)), 3.0);
+    vec3 base = pal(hueClock + minTrap*0.22 + p.y*0.15);
+    col = base*(0.18 + dif*0.9) + pal(hueClock+0.35)*rim*(0.6+uTreble*0.8);
+    col *= mix(0.35, 1.0, smoothstep(9.0, 2.0, td));   // depth fog
+  }
+
+  // ambient glow field: the "energy" of the piece
+  col += pal(hueClock + 0.15) * g * (0.010 + uTreble*0.020 + uBeat*0.020);
+  col += pal(hueClock + minTrap*0.10) * exp(-minTrap*2.6) * (0.25+uMid*0.55);
+
+  // exposure from loudness, ACES tonemap, vignette, grain
+  col *= 0.75 + uRMS*1.6;
+  col = (col*(2.51*col+0.03))/(col*(2.43*col+0.59)+0.14);
+  col *= 1.0 - 0.35*dot(uv*0.55,uv*0.55);
+  float gr = fract(sin(dot(gl_FragCoord.xy+uTime*60.0,vec2(12.9898,78.233)))*43758.5453);
+  col += (gr-0.5)*0.028;
+
+  O = vec4(pow(max(col,0.0), vec3(0.4545)), 1.0);
+}
+</script>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const canvas=$("gl"), err=$("err");
+function fail(msg){ err.style.display="block"; err.textContent=msg;
+  window.__forge={ready:false,error:msg}; }
+window.__forge={ready:false,frames:0};
+
+const gl = canvas.getContext("webgl2",{antialias:false,alpha:false,preserveDrawingBuffer:true});
+if(!gl){ fail("WebGL2 not available on this device/browser"); throw new Error("no webgl2"); }
+
+// ---- shader compile ----
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){fail("shader: "+gl.getShaderInfoLog(s));throw 0;}return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,"#version 300 es\nin vec2 p;void main(){gl_Position=vec4(p,0.,1.);}"));
+gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,$("fs").textContent));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){fail("link: "+gl.getProgramInfoLog(prog));throw 0;}
+gl.useProgram(prog);
+const buf=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const loc=gl.getAttribLocation(prog,"p");
+gl.enableVertexAttribArray(loc);
+gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+const U={}; ["uRes","uTime","uBass","uMid","uTreble","uBeat","uFlux","uRMS","uPreset"]
+  .forEach(n=>U[n]=gl.getUniformLocation(prog,n));
+
+// ---- sizing ----
+let quality=720;
+function resize(){
+  const ar=innerWidth/innerHeight;
+  canvas.height=quality;                 // 720 or 1080 lines
+  canvas.width=Math.round(quality*ar);   // match screen aspect for clean captures
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+addEventListener("resize",resize); resize();
+$("quality").onchange=e=>{quality=+e.target.value;resize();};
+
+// ---- audio engine ----
+let actx=null, analyser=null, srcNode=null, el=new Audio(), audioDest=null, freq=null;
+let playing=false, beat=0, beatSmooth=0, flux=0, prevBins=null, lastBeatT=0, bassEma=0.05;
+el.crossOrigin="anonymous"; el.loop=false;
+
+function initAudio(){
+  if(actx) return;
+  actx=new (window.AudioContext||window.webkitAudioContext)();
+  analyser=actx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.55;
+  srcNode=actx.createMediaElementSource(el);
+  audioDest=actx.createMediaStreamDestination();
+  srcNode.connect(analyser); analyser.connect(actx.destination); srcNode.connect(audioDest);
+  freq=new Uint8Array(analyser.frequencyBinCount);
+}
+function bands(){
+  analyser.getByteFrequencyData(freq);
+  const avg=(a,b)=>{let s=0;for(let i=a;i<b;i++)s+=freq[i];return s/((b-a)*255);};
+  // fftSize 2048 @48k -> bin ~23.4Hz
+  return { bass:avg(1,7), mid:avg(9,85), tre:avg(86,470) };
+}
+function analyse(dt){
+  const b=bands();
+  // adaptive bass average for beat detection
+  bassEma=bassEma*0.995+b.bass*0.005;
+  const now=performance.now();
+  if(b.bass>bassEma*1.45 && b.bass>0.28 && now-lastBeatT>240){
+    beat=1; lastBeatT=now;
+  }
+  beat*=Math.pow(0.86, dt*60);          // fast decay punch envelope
+  beatSmooth=beatSmooth*0.9+beat*0.1;
+  // spectral flux (forward energy) -> motion driver
+  if(prevBins){
+    let f=0; for(let i=1;i<470;i++){const d=freq[i]-prevBins[i]; if(d>0)f+=d;}
+    flux=flux*0.85+(f/470/255)*0.15;
+  }
+  prevBins=prevBins||new Uint8Array(freq.length);
+  prevBins.set(freq);
+  return b;
+}
+
+// ---- file load ----
+let objectUrl=null;
+$("file").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  initAudio();
+  if(objectUrl)URL.revokeObjectURL(objectUrl);
+  objectUrl=URL.createObjectURL(f);
+  el.src=objectUrl;
+  $("track").textContent=f.name;
+  $("play").disabled=false; $("rec").disabled=false;
+  $("play").textContent="PLAY";
+};
+
+// ---- play / pause ----
+$("play").onclick=async()=>{
+  initAudio();
+  if(actx.state==="suspended") await actx.resume();
+  if(playing){ el.pause(); playing=false; $("play").textContent="PLAY"; }
+  else{ await el.play(); playing=true; $("play").textContent="PAUSE"; }
+};
+el.onended=()=>{ playing=false; $("play").textContent="PLAY"; if(recording) stopRec(true); };
+
+// ---- recording ----
+let recorder=null, chunks=[], recording=false;
+function pickMime(){
+  for(const m of ["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"])
+    if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+$("rec").onclick=()=>{ recording?stopRec(false):startRec(); };
+function startRec(){
+  if(!el.src) return;
+  initAudio(); if(actx.state==="suspended") actx.resume();
+  const stream=new MediaStream([
+    ...canvas.captureStream(60).getVideoTracks(),
+    ...audioDest.stream.getAudioTracks()
+  ]);
+  chunks=[];
+  recorder=new MediaRecorder(stream,{mimeType:pickMime(),videoBitsPerSecond:14_000_000,audioBitsPerSecond:192_000});
+  recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  recorder.onstop=()=>{
+    const blob=new Blob(chunks,{type:"webm"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="fractal-forge-"+Date.now()+".webm";
+    a.click();
+  };
+  recorder.start(250);
+  recording=true;
+  $("rec").textContent="STOP + SAVE"; $("rec").classList.add("recording");
+  if(!playing) $("play").click();
+}
+function stopRec(auto){
+  if(recorder&&recorder.state!=="inactive") recorder.stop();
+  recording=false;
+  $("rec").textContent="RECORD"; $("rec").classList.remove("recording");
+}
+
+// ---- UI auto-hide (clean captures) ----
+let uiTimer=null;
+function pokeUI(){
+  $("ui").classList.remove("hidden"); $("hint").classList.add("hidden");
+  clearTimeout(uiTimer);
+  uiTimer=setTimeout(()=>{ if(playing||recording) $("ui").classList.add("hidden"); },3000);
+}
+addEventListener("pointerdown",pokeUI); pokeUI();
+
+// ---- render loop ----
+const t0=performance.now();
+let lastT=t0;
+function frame(){
+  const now=performance.now();
+  const dt=Math.min((now-lastT)/1000,0.1); lastT=now;
+  let b={bass:0,mid:0,tre:0}, rms=0;
+  if(playing&&analyser){
+    b=analyse(dt);
+    rms=b.bass*0.5+b.mid*0.35+b.tre*0.15;
+  } else {
+    beat*=0.9; beatSmooth*=0.9; flux*=0.9;
+  }
+  const t=(now-t0)/1000;
+  gl.uniform2f(U.uRes,canvas.width,canvas.height);
+  gl.uniform1f(U.uTime,t);
+  gl.uniform1f(U.uBass,b.bass);
+  gl.uniform1f(U.uMid,b.mid);
+  gl.uniform1f(U.uTreble,b.tre);
+  gl.uniform1f(U.uBeat,beatSmooth);
+  gl.uniform1f(U.uFlux,flux*3.0);
+  gl.uniform1f(U.uRMS,rms);
+  gl.uniform1i(U.uPreset,+$("preset").value);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  window.__forge.frames++;
+  window.__forge.ready=true;
+  // time readout
+  if(el.src){ const s=el.currentTime|0;
+    $("time").textContent=String(s/60|0).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
