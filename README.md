@@ -66,3 +66,11 @@ SQUARED palette for jewel-tone saturation, structural hue injection (fold-direct
 per-octave phase ph). Verified gates (hard): nearwhite<=2%, sat>=0.25, hueStd>=0.15,
 ASCII composition preview. Idle: lum .42 sat .56 hueStd .28. Dive: lum .54 sat .47 hueStd .33.
 RGBA8 FBO path forced (half-float sampling unreliable across drivers).
+
+## 1.5.0 (2026-09-11)
+INSTRUMENT CONTROLS. TUNE panel (12 live params): dive speed, cell density, fold symmetry,
+color drift, saturation, vein glow, bloom, beat sensitivity, beat kick, exposure, kaleido
+max, fold count (3/4/6/8) + reset-to-defaults. All map to shader uniforms every frame.
+INTERACTION: drag x = spiral + corridor drift, drag y = dive speed (clamped, decays),
+double-tap = beat kick, wheel = manual zoom. Verified headless: zero JS errors, panel
+binds, sliders measurably change render, steering advances zoom, dbl-tap kicks.

@@ -20,6 +20,18 @@
   select{background:#0d0d1f;color:#cfd0ff;border:1px solid #2a2a55;border-radius:8px;padding:9px;font-size:12px}
   #hint{position:fixed;top:14px;left:16px;color:#55578a;font-size:12px;z-index:10;transition:opacity .4s}
   #hint.hidden{opacity:0}
+  #tune{position:fixed;top:14px;right:14px;z-index:11;padding:9px 13px}
+  #panel{position:fixed;top:56px;right:14px;bottom:14px;width:230px;z-index:11;overflow-y:auto;
+      background:rgba(8,8,22,.92);border:1px solid #2a2a55;border-radius:10px;padding:12px;
+      display:none;backdrop-filter:blur(6px)}
+  #panel.open{display:block}
+  .ctl{margin-bottom:10px}
+  .ctl label{display:block;color:#8f90c0;font-size:10px;letter-spacing:.5px;margin-bottom:3px}
+  .ctl input[type=range]{width:100%;height:18px;-webkit-appearance:none;background:transparent}
+  .ctl input[type=range]::-webkit-slider-runnable-track{height:3px;background:#2a2a55;border-radius:2px}
+  .ctl input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+      background:#7c4dff;margin-top:-5px;cursor:pointer}
+  .ctl .val{float:right;color:#cfd0ff}
   #err{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);color:#ff2d55;font-size:14px;max-width:80vw;
        display:none;z-index:20;text-align:center}
 </style>
@@ -45,7 +57,9 @@
   <span id="track">no track</span>
   <span id="time">00:00</span>
   <span id="zoom">x1e0.0</span>
+  <button id="tune">TUNE</button>
 </div>
+<div id="panel"></div>
 
 <!-- ======================= SCENE: LOG-POLAR INFINITE FRACTAL ZOOM (HDR) ======================= -->
 <script id="fs-scene" type="x-shader/x-fragment">#version 300 es
@@ -53,6 +67,7 @@ precision highp float;
 out vec4 O;
 uniform vec2  uRes;
 uniform float uTime, uZoom, uSpin, uDrift, uBass, uMid, uTreble, uBeat, uFlux, uRMS, uDrop;
+uniform float uDensity, uFold, uSatGain, uVeinGlow, uExposure, uHueRate;
 uniform int   uPreset;
 vec3 palette(float t){
   if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.05,0.10)));
@@ -68,7 +83,7 @@ void main(){
   p.x -= uZoom;
   p.y += uSpin;
   p.y = mod(p.y + 3.14159, 6.28318) - 3.14159;
-  float density = 2.2 + uTreble*0.9;
+  float density = uDensity + uTreble*0.9;
   p *= density;
   p.x += uDrift;
   vec2 q = p;
@@ -77,7 +92,7 @@ void main(){
   float ph = 0.0;
   for(int i=0;i<5;i++){
     q = abs(q) - (0.9 + uBass*0.35);
-    q *= rot(0.42 + float(i)*0.55 + uMid*0.5);
+    q *= rot(uFold + float(i)*0.55 + uMid*0.5);
     float ci = cos(q.x*0.85)*cos(q.y*0.85);
     f += amp * ci;
     ph += 0.14 + ci*0.10;
@@ -86,14 +101,14 @@ void main(){
   }
   float m = pow(clamp(abs(f)*1.7, 0.0, 1.0), 0.7);
   float qh = atan(q.y, q.x) / 6.28318;
-  float hueClock = uTime*0.02 + uZoom*0.012 + float(uPreset)*0.33;
+  float hueClock = uTime*uHueRate + uZoom*0.012 + float(uPreset)*0.33;
   vec3 base = palette(hueClock + 0.05 + m*0.32 + qh*0.25 + ph*0.35);
-  base *= base * 2.6;
+  base *= base * uSatGain;
   vec3 col = base * (0.10 + 1.20*m*m);
-  col += palette(hueClock + 0.15 + qh*0.2) * exp(-m*15.0) * (0.70 + uBeat*0.8 + uDrop*0.2);
+  col += palette(hueClock + 0.15 + qh*0.2) * exp(-m*15.0) * (uVeinGlow + uBeat*0.8 + uDrop*0.2);
   col += palette(hueClock + 0.02) * exp(-r*4.5) * (0.35 + uBeat*0.55);
   col += palette(hueClock + 0.22) * smoothstep(0.75, 0.0, r) * uFlux * 0.30;
-  col *= 0.72 + uRMS*0.45;
+  col *= uExposure + uRMS*0.45;
   if(uPreset==1) col *= 1.15;
   if(uPreset==2) col *= 1.25;
   O = vec4(col, 1.0);
@@ -139,7 +154,7 @@ precision highp float;
 out vec4 O;
 uniform sampler2D tScene, tBloom;
 uniform vec2 uRes;
-uniform float uTime, uBeat, uKaleido, uDrop;
+uniform float uTime, uBeat, uKaleido, uDrop, uBloomAmt, uSeg;
 
 void main(){
   vec2 uv = gl_FragCoord.xy/uRes;
@@ -148,7 +163,7 @@ void main(){
 
   float a = atan(c.y, c.x);
   float r = length(c);
-  float seg = 6.28318/6.0;
+  float seg = 6.28318/uSeg;
   float ka = mod(a, seg);
   ka = abs(ka - seg*0.5);
   vec2 kc = vec2(cos(ka), sin(ka)) * r;
@@ -164,7 +179,7 @@ void main(){
   col.b = texture(tScene, fuv - dir*ca).b;
 
   vec3 bloom = texture(tBloom, fuv).rgb;
-  col += bloom * (0.38 + uBeat*0.18 + uDrop*0.18);
+  col += bloom * (uBloomAmt + uBeat*0.18 + uDrop*0.18);
 
   col = (col*(2.51*col+0.03))/(col*(2.43*col+0.59)+0.14);
   col *= 1.0 - 0.30*dot(c*0.62, c*0.62);
@@ -242,6 +257,63 @@ function allocFB(){
   bloomATex=mkTex(BW,BH,useFloatFBO); bloomAFBO=mkFBO(bloomATex);
   bloomBTex=mkTex(BW,BH,useFloatFBO); bloomBFBO=mkFBO(bloomBTex);
 }
+// ---- LIVE PARAMETERS (sliders + interaction) ----
+const P = {
+  zoomSpeed:{v:0.06,min:0,max:0.30,step:0.005,label:"DIVE SPEED"},
+  density:{v:2.2,min:1.2,max:4.0,step:0.05,label:"CELL DENSITY"},
+  fold:{v:0.42,min:0,max:1.2,step:0.01,label:"FOLD SYMMETRY"},
+  hueRate:{v:0.02,min:0,max:0.10,step:0.001,label:"COLOR DRIFT"},
+  satGain:{v:2.6,min:1.0,max:5.0,step:0.05,label:"SATURATION"},
+  veinGlow:{v:0.70,min:0,max:2.0,step:0.05,label:"VEIN GLOW"},
+  bloom:{v:0.38,min:0,max:1.5,step:0.05,label:"BLOOM"},
+  beatSens:{v:1.45,min:1.1,max:2.2,step:0.01,label:"BEAT SENSITIVITY"},
+  kick:{v:0.55,min:0,max:1.5,step:0.05,label:"BEAT KICK"},
+  exposure:{v:0.72,min:0.3,max:1.5,step:0.01,label:"EXPOSURE"},
+  kaleidoMax:{v:1.0,min:0,max:1,step:0.05,label:"KALEIDO MAX"},
+};
+const DEFAULTS = Object.fromEntries(Object.entries(P).map(([k,o])=>[k,o.v]));
+const segSel = {v:6, label:"KALEIDO FOLDS"};
+(function buildPanel(){
+  const panel=$("panel");
+  let html="";
+  for(const [k,o] of Object.entries(P)){
+    html+=`<div class="ctl"><label>${o.label}<span class="val" id="val_${k}">${o.v}</span></label>
+      <input type="range" id="sl_${k}" min="${o.min}" max="${o.max}" step="${o.step}" value="${o.v}"></div>`;
+  }
+  html+=`<div class="ctl"><label>${segSel.label}<span class="val" id="val_seg">${segSel.v}</span></label>
+    <select id="sl_seg" style="width:100%">
+      <option value="3">3</option><option value="4">4</option><option value="6" selected>6</option><option value="8">8</option>
+    </select></div>`;
+  html+=`<button id="reset" style="width:100%">RESET DEFAULTS</button>
+    <div style="color:#565790;font-size:10px;margin-top:8px">DRAG: steer dive (x=spiral, y=speed)<br>
+    DOUBLE-TAP: kick &nbsp; WHEEL: zoom</div>`;
+  panel.innerHTML=html;
+  for(const k of Object.keys(P)){
+    $("sl_"+k).oninput=e=>{ P[k].v=+e.target.value; $("val_"+k).textContent=e.target.value; };
+  }
+  $("sl_seg").onchange=e=>{ segSel.v=+e.target.value; $("val_seg").textContent=e.target.value; };
+  $("reset").onclick=()=>{ for(const k of Object.keys(P)){ P[k].v=DEFAULTS[k];
+    $("sl_"+k).value=DEFAULTS[k]; $("val_"+k).textContent=DEFAULTS[k]; } };
+  $("tune").onclick=()=>{ panel.classList.toggle("open"); };
+})();
+
+// ---- POINTER STEERING ----
+let zoomVel=0, dragX=0, dragY=0, dragging=false, lastTap=0;
+canvas.addEventListener("pointerdown",e=>{ if(e.target!==canvas) return;
+  dragging=true; dragX=e.clientX; dragY=e.clientY;
+  const now=performance.now();
+  if(now-lastTap<320){ beat=1; zoomKick+=P.kick.v; lastTap=0; } else lastTap=now;
+});
+addEventListener("pointermove",e=>{ if(!dragging) return;
+  const dx=e.clientX-dragX, dy=e.clientY-dragY;
+  dragX=e.clientX; dragY=e.clientY;
+  spin += dx*0.004;
+  drift = Math.max(-3, Math.min(3, drift + dx*0.006));
+  zoomVel = Math.max(-0.6, Math.min(1.2, zoomVel - dy*0.003));
+});
+addEventListener("pointerup",()=>{ dragging=false; });
+canvas.addEventListener("wheel",e=>{ e.preventDefault(); zoom += e.deltaY*-0.0006; },{passive:false});
+
 let quality=720;
 function resize(){
   const ar=innerWidth/innerHeight;
@@ -282,14 +354,14 @@ function analyse(dt){
   midEma=midEma*0.98+b.mid*0.02;
   treEma=treEma*0.98+b.tre*0.02;
   const now=performance.now();
-  if(b.bass>bassEma*1.45 && b.bass>0.28 && now-lastBeatT>240){
-    beat=1; zoomKick+=0.55; lastBeatT=now;      // beat = inward whoosh
+  if(b.bass>bassEma*P.beatSens.v && b.bass>0.28 && now-lastBeatT>240){
+    beat=1; zoomKick+=P.kick.v; lastBeatT=now;
   }
   beat*=Math.pow(0.86, dt*60);
   beatSmooth=beatSmooth*0.9+beat*0.1;
   const dropTarget=(b.bass>0.5 && bassSlow>0.38)?1:0;
   drop += (dropTarget-drop)*(dropTarget>drop?0.04:0.012);
-  const kTarget=Math.max(beatSmooth*0.5, drop);
+  const kTarget=Math.max(beatSmooth*0.5, drop)*P.kaleidoMax.v;
   kaleido += (kTarget-kaleido)*0.08;
   if(prevBins){
     let f=0; for(let i=1;i<470;i++){const d=freq[i]-prevBins[i]; if(d>0)f+=d;}
@@ -402,7 +474,8 @@ function frame(){
 
   // ---- AUDIO -> ZOOM DIVE ----
   zoomKick *= Math.pow(0.25, dt);                       // kick decay
-  zoom += dt*(0.06 + b.bass*0.55 + drop*0.40) + zoomKick*dt*3.0;
+  zoom += dt*(P.zoomSpeed.v + b.bass*0.55 + drop*0.40 + zoomVel) + zoomKick*dt*3.0;
+  zoomVel *= 0.96;
   spin += dt*(0.05 + flux*0.9) + beatSmooth*dt*0.3;
   drift += (midEma*1.6 - drift)*0.02;                   // mids choose the corridor
 
@@ -417,6 +490,9 @@ function frame(){
   gl.uniform1f(uS.bass,b.bass); gl.uniform1f(uS.mid,b.mid); gl.uniform1f(uS.tre,b.tre);
   gl.uniform1f(uS.beat,beatSmooth); gl.uniform1f(uS.flux,flux*1.6);
   gl.uniform1f(uS.rms,rms); gl.uniform1f(uS.drop,drop); gl.uniform1i(uS.preset,preset);
+  gl.uniform1f(U(progScene,"uDensity"),P.density.v); gl.uniform1f(U(progScene,"uFold"),P.fold.v);
+  gl.uniform1f(U(progScene,"uSatGain"),P.satGain.v); gl.uniform1f(U(progScene,"uVeinGlow"),P.veinGlow.v);
+  gl.uniform1f(U(progScene,"uExposure"),P.exposure.v); gl.uniform1f(U(progScene,"uHueRate"),P.hueRate.v);
   gl.drawArrays(gl.TRIANGLES,0,3);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER,bloomAFBO);
@@ -449,6 +525,7 @@ function frame(){
   gl.uniform2f(uP.res,W,H); gl.uniform1f(uP.time,t);
   gl.uniform1f(uP.beat,beatSmooth); gl.uniform1f(uP.kaleido,kaleido);
   gl.uniform1f(uP.drop,drop);
+  gl.uniform1f(U(progPost,"uBloomAmt"),P.bloom.v); gl.uniform1f(U(progPost,"uSeg"),segSel.v);
   gl.drawArrays(gl.TRIANGLES,0,3);
   gl.activeTexture(gl.TEXTURE0);
 
