@@ -56,3 +56,13 @@ Singularity core flares on beats. Zoom factor readout (x1eN).
 EXPORT: SNAP = PNG frame; RECORD = WebM (video+audio) — both saved natively to
 Downloads/FractalForge via chunked ForgeBridge (startFile/appendChunk/endFile,
 MediaStore.Downloads API 29+); desktop browsers use blob download.
+
+## 1.4.0 (2026-09-11)
+COLOR FIELD REDESIGN (the white-screen fix). Root cause chain: (1) reversed-edge smoothstep
+with exploding fwidth = UB garbage on real drivers (v1.3.0 white screen); (2) palette centered
+at 0.5 brightness painted the whole frame hot with no dark anchor. New field: bounded-frequency
+layered cosines + abs-folds in log-polar space (infinite zoom preserved), dark-anchored walls,
+SQUARED palette for jewel-tone saturation, structural hue injection (fold-direction qh +
+per-octave phase ph). Verified gates (hard): nearwhite<=2%, sat>=0.25, hueStd>=0.15,
+ASCII composition preview. Idle: lum .42 sat .56 hueStd .28. Dive: lum .54 sat .47 hueStd .33.
+RGBA8 FBO path forced (half-float sampling unreliable across drivers).

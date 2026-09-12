@@ -54,60 +54,48 @@ out vec4 O;
 uniform vec2  uRes;
 uniform float uTime, uZoom, uSpin, uDrift, uBass, uMid, uTreble, uBeat, uFlux, uRMS, uDrop;
 uniform int   uPreset;
-
 vec3 palette(float t){
-  if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.04,0.09)));
+  if(uPreset==1) return 0.5+0.5*cos(6.28318*(t+vec3(0.00,0.05,0.10)));
   if(uPreset==2) return 0.5+0.5*cos(6.28318*(t+vec3(0.50,0.56,0.44)));
   return 0.5+0.5*cos(6.28318*(t+vec3(0.72,0.78,0.68)));
 }
 mat2 rot(float a){float c=cos(a),s=sin(a);return mat2(c,-s,s,c);}
-
 void main(){
   vec2 uv = (2.0*gl_FragCoord.xy - uRes)/uRes.y;
   float r = max(length(uv), 1e-4);
   float a = atan(uv.y, uv.x);
-
-  // ---- AUDIO BUILDS THE ZOOM PATH through log-polar fractal space ----
-  // Periodic in log(r): the pattern repeats every e^(period) of zoom -> INFINITE dive,
-  // zero float degradation (a Mandelbrot zoom dies ~1e-14; this never does).
   vec2 p = vec2(log(r), a);
   p.x -= uZoom;
   p.y += uSpin;
   p.y = mod(p.y + 3.14159, 6.28318) - 3.14159;
-  float density = 2.4 + uTreble*1.3 + uDrop*0.5;
+  float density = 2.2 + uTreble*0.9;
   p *= density;
   p.x += uDrift;
-
-  // fractal cell field: abs-folds + periodic cos cells = kaleidoscopic self-similar tiling
   vec2 q = p;
-  float walls = 1e10;
-  float acc = 0.0;
-  for(int i=0;i<6;i++){
-    q = abs(q) - (0.55 + uBass*0.22);
-    q *= rot(0.55 + float(i)*0.38 + uMid*0.45);
-    float ci = cos(q.x*3.14159)*cos(q.y*3.14159);
-    walls = min(walls, abs(ci));
-    acc += exp(-abs(ci)*7.0);
-    q *= 1.13 + uBass*0.04;
+  float amp = 0.62;
+  float f = 0.0;
+  float ph = 0.0;
+  for(int i=0;i<5;i++){
+    q = abs(q) - (0.9 + uBass*0.35);
+    q *= rot(0.42 + float(i)*0.55 + uMid*0.5);
+    float ci = cos(q.x*0.85)*cos(q.y*0.85);
+    f += amp * ci;
+    ph += 0.14 + ci*0.10;
+    q *= 1.42;
+    amp *= 0.52;
   }
-  float fw = max(fwidth(walls)*1.6, 0.002);
-  float cellLine = smoothstep(0.10+fw, 0.10-fw, walls);
-  float cellGlow = exp(-walls*3.5);
-
+  float m = pow(clamp(abs(f)*1.7, 0.0, 1.0), 0.7);
+  float qh = atan(q.y, q.x) / 6.28318;
   float hueClock = uTime*0.02 + uZoom*0.012 + float(uPreset)*0.33;
-  vec3 col = vec3(0.004,0.004,0.010);
-  col += palette(hueClock + 0.10) * cellLine * (1.2 + uTreble*1.8 + uBeat*1.5);
-  col += palette(hueClock + 0.02 + acc*0.03) * cellGlow * (0.35 + uMid*0.75);
-  col += palette(hueClock + 0.20) * exp(-walls*walls*40.0) * 0.8;
-
-  // the singularity: the point the dive is rushing toward — beats flare it
-  col += palette(hueClock + 0.05) * exp(-r*6.0) * (0.7 + uBeat*2.2 + uDrop*0.8);
-  // peripheral swirl energy from flux
-  col += palette(hueClock + 0.14) * smoothstep(1.4, 0.2, r) * uFlux * 0.35;
-
-  col *= 1.05 + uRMS*0.9;
-  if(uPreset==1) col *= 1.45;
-  if(uPreset==2) col *= 1.60;
+  vec3 base = palette(hueClock + 0.05 + m*0.32 + qh*0.25 + ph*0.35);
+  base *= base * 2.6;
+  vec3 col = base * (0.10 + 1.20*m*m);
+  col += palette(hueClock + 0.15 + qh*0.2) * exp(-m*15.0) * (0.70 + uBeat*0.8 + uDrop*0.2);
+  col += palette(hueClock + 0.02) * exp(-r*4.5) * (0.35 + uBeat*0.55);
+  col += palette(hueClock + 0.22) * smoothstep(0.75, 0.0, r) * uFlux * 0.30;
+  col *= 0.72 + uRMS*0.45;
+  if(uPreset==1) col *= 1.15;
+  if(uPreset==2) col *= 1.25;
   O = vec4(col, 1.0);
 }
 </script>
@@ -122,7 +110,7 @@ void main(){
   vec2 uv = gl_FragCoord.xy/uRes;
   vec3 c = texture(tScene, uv).rgb;
   float l = dot(c, vec3(0.2126,0.7152,0.0722));
-  float soft = clamp(l - 0.55, 0.0, 4.0);
+  float soft = clamp(l - 0.85, 0.0, 4.0);
   O = vec4(c * (soft/(l+0.0001)), 1.0);
 }
 </script>
@@ -176,7 +164,7 @@ void main(){
   col.b = texture(tScene, fuv - dir*ca).b;
 
   vec3 bloom = texture(tBloom, fuv).rgb;
-  col += bloom * (0.55 + uBeat*0.35 + uDrop*0.35);
+  col += bloom * (0.38 + uBeat*0.18 + uDrop*0.18);
 
   col = (col*(2.51*col+0.03))/(col*(2.43*col+0.59)+0.14);
   col *= 1.0 - 0.30*dot(c*0.62, c*0.62);
@@ -228,9 +216,9 @@ const uBl={inp:U(progBlur,"tIn"),res:U(progBlur,"uRes"),dir:U(progBlur,"uDir")};
 const uP={scene:U(progPost,"tScene"),bloom:U(progPost,"tBloom"),res:U(progPost,"uRes"),
   time:U(progPost,"uTime"),beat:U(progPost,"uBeat"),kaleido:U(progPost,"uKaleido"),drop:U(progPost,"uDrop")};
 
-function mkTex(w,h){
+function mkTex(w,h,useFloat){
   const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
-  if(floatExt) gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,w,h,0,gl.RGBA,gl.HALF_FLOAT,null);
+  if(useFloat) gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,w,h,0,gl.RGBA,gl.HALF_FLOAT,null);
   else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
@@ -241,11 +229,18 @@ function mkTex(w,h){
 function mkFBO(t){const f=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,f);
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);return f;}
 let sceneTex,sceneFBO,bloomATex,bloomAFBO,bloomBTex,bloomBFBO,W=0,H=0,BW=0,BH=0;
+let useFloatFBO = false; // half-float FBO sampling verified unreliable (SwiftShader white-screen); RGBA8 universal
 function allocFB(){
-  sceneTex=mkTex(W,H); sceneFBO=mkFBO(sceneTex);
+  // PRO FIX: verify half-float FBO is actually COMPLETE on this GPU; verified
+  // SwiftShader (and some real drivers) advertise the ext but produce garbage.
+  for(let attempt=0; attempt<2; attempt++){
+    sceneTex=mkTex(W,H,useFloatFBO); sceneFBO=mkFBO(sceneTex);
+    if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE) break;
+    useFloatFBO=false;
+  }
   BW=Math.max(1,W>>2); BH=Math.max(1,H>>2);
-  bloomATex=mkTex(BW,BH); bloomAFBO=mkFBO(bloomATex);
-  bloomBTex=mkTex(BW,BH); bloomBFBO=mkFBO(bloomBTex);
+  bloomATex=mkTex(BW,BH,useFloatFBO); bloomAFBO=mkFBO(bloomATex);
+  bloomBTex=mkTex(BW,BH,useFloatFBO); bloomBFBO=mkFBO(bloomBTex);
 }
 let quality=720;
 function resize(){
@@ -459,6 +454,16 @@ function frame(){
 
   window.__forge.frames++;
   window.__forge.ready=true;
+  window.__dbg = {useFloat: useFloatFBO, W, H,
+    gl,
+    readScene(){ const px=new Uint8Array(4*4*4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO);
+      gl.readPixels(W/2,H/2,2,2,gl.RGBA,gl.UNSIGNED_BYTE,px);
+      const px2=new Uint8Array(4*4*4);
+      gl.readPixels(W-8,H-8,2,2,gl.RGBA,gl.UNSIGNED_BYTE,px2);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      return {center:[...px].slice(0,8), corner:[...px2].slice(0,8)};
+    }};
   $("zoom").textContent="x1e"+(zoom/2.302585).toFixed(1);
   if(el.src){ const s=el.currentTime|0;
     $("time").textContent=String(s/60|0).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
